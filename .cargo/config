@@ -1,0 +1,13 @@
+# .cargo/config
+[build]
+#Always compile for the instruction set of the device
+
+target = "thumbv7m-none-eabi"
+
+# use the Tlink.x script from the cortex-m-rt crate
+[target.thumbv7m-none-eabi]
+    runner = "gdb-multiarch -q -x openocd.gdb"
+    rustflags = [ 
+        "-C","linker=flip-link", 
+        "-C","link-arg=-Tlink.x",
+        ]
