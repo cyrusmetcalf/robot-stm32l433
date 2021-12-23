@@ -29,6 +29,8 @@ panic-halt = "^0.2.0"
 generic-array = "0.14.4"
 heapless = "0.6.1"
 
+servo_controller = { path = "../servo_controller" }
+
 [dependencies.stm32l4xx-hal]
 features = ["stm32l4x3", "rt"]
 version = "^0.6.0"

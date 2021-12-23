@@ -15,6 +15,8 @@ use stm32l4xx_hal::{
 
 use rtic::cyccnt::U32Ext;
 
+use servo_controller::ServoController;
+
 #[rtic::app(device = stm32l4xx_hal::stm32,peripherals=true, monotonic = rtic::cyccnt::CYCCNT)]
 const APP: () = {
     struct Resources {
@@ -68,7 +70,7 @@ const APP: () = {
         let (tx, rx) = serial2.split();
 
         // PWM channel
-        const PWM_FREQUENCY: u32 = 250_u32; // Hz
+        const SERVO_PWM_FREQUENCY: u32 = 50_u32; // Hz
         let c1 = gpioa
             .pa0
             .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper)
@@ -77,23 +79,20 @@ const APP: () = {
             .pa1
             .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper)
             .into_af1(&mut gpioa.moder, &mut gpioa.afrl);
-        let (mut pwm1, mut pwm2) =
+        let (pwm1,pwm2) =
             dp.TIM2
-                .pwm((c1, c2), PWM_FREQUENCY.hz(), clocks, &mut rcc.apb1r1);
+                .pwm((c1, c2), SERVO_PWM_FREQUENCY.hz(), clocks, &mut rcc.apb1r1);
 
-        pwm1.enable();
-        pwm2.enable();
+        let mut servo_one = ServoController::new(pwm1, SERVO_PWM_FREQUENCY);
+        let mut servo_two = ServoController::new(pwm2, SERVO_PWM_FREQUENCY);
+        
+        servo_one.enable(true);
+        servo_two.enable(true);
 
-        let max_duty = pwm1.get_max_duty();
 
-        let forward = max_duty / 4;
-        let stopped = 3 * max_duty / 8;
-        let back = max_duty / 2;
-
-        pwm1.set_duty(forward);
-        pwm2.set_duty(back);
-        //pwm.set_duty(stopped);
-        //pwm.set_duty(back);
+        servo_one.set_vector(1.0);
+        servo_two.set_vector(-1.0);
+        
 
         // Scheduled Tasks
         cx.schedule
