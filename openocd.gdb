@@ -1,5 +1,5 @@
 # connect to openocd tcp server, port 3333
-target remote localhost:4242
+target remote localhost:3333
 
 # Reset and halt target
 monitor reset halt
