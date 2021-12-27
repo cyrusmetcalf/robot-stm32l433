@@ -26,7 +26,7 @@ const APP: () = {
         rx: serial::Rx<USART2>,
         tx: serial::Tx<USART2>,
         led: PB13<Output<PushPull>>,
-        //echo: PB6<Input<PullDown>>, 
+        echo: PB6<Input<PullDown>>, 
     }
 
     #[init(schedule = [heartbeat])]
@@ -34,12 +34,12 @@ const APP: () = {
         let mut dp = cx.device;
 
         // Prevent instibility on sleep with Probe-run
-//        dp.DBGMCU.cr.modify(|_, w| {
-//            w.dbg_sleep().set_bit();
-//            w.dbg_standby().set_bit();
-//            w.dbg_stop().set_bit()
-//        });
-//
+        dp.DBGMCU.cr.modify(|_, w| {
+            w.dbg_sleep().set_bit();
+            w.dbg_standby().set_bit();
+            w.dbg_stop().set_bit()
+        });
+
         // set up cycle-count
         cx.core.DCB.enable_trace();
         DWT::unlock();
@@ -50,8 +50,8 @@ const APP: () = {
         let mut pwr = dp.PWR.constrain(&mut rcc.apb1r1);
         let clocks = rcc
             .cfgr
-            .sysclk(SYSTEM_CLOCK_HZ.mhz())
-            .hclk(SYSTEM_CLOCK_HZ.mhz())
+            .sysclk(SYSTEM_CLOCK_HZ.hz())
+            .hclk(SYSTEM_CLOCK_HZ.hz())
             .freeze(&mut flash.acr, &mut pwr);
 
         // GPIO
@@ -102,19 +102,19 @@ const APP: () = {
         // Range Finder
         
         // we need an edge-triggered interrupt that measures how long it was held high.
-    //    let mut echo = gpiob.pb6.into_pull_down_input(&mut gpiob.moder, &mut gpiob.pupdr);
-    //    echo.make_interrupt_source(&mut dp.SYSCFG, &mut rcc.apb2);
-    //    echo.trigger_on_edge(&mut dp.EXTI, Edge::RISING_FALLING);
-    //    echo.enable_interrupt(&mut dp.EXTI);
+        let mut echo = gpiob.pb6.into_pull_down_input(&mut gpiob.moder, &mut gpiob.pupdr);
+        echo.make_interrupt_source(&mut dp.SYSCFG, &mut rcc.apb2);
+        echo.trigger_on_edge(&mut dp.EXTI, Edge::RISING_FALLING);
+        echo.enable_interrupt(&mut dp.EXTI);
 
-    //    rtic::pend(interrupt::EXTI9_5);
+        rtic::pend(interrupt::EXTI9_5);
 
 
         // Scheduled Tasks
         cx.schedule
             .heartbeat(cx.start + SYSTEM_CLOCK_HZ.cycles())
             .unwrap();
-        init::LateResources { tx, rx, led }
+        init::LateResources { tx, rx, led, echo}
     }
 
     #[task(schedule = [heartbeat], resources = [led] )]
@@ -136,18 +136,18 @@ const APP: () = {
             .unwrap();
     }
 
-    //#[task(binds = EXTI9_5, resources = [echo])]
-    //fn receive_echo(cx:  receive_echo::Context) {
-    //    static mut TEST_VALUE: bool = false;
-    //    if cx.resources.echo.check_interrupt() { 
-    //        cx.resources.echo.clear_interrupt_pending_bit();
-    //        if cx.resources.echo.is_high().unwrap() {
-    //            *TEST_VALUE = true;
-    //        } else {
-    //            *TEST_VALUE = false;
-    //        }
-    //    }
-    //}
+    #[task(binds = EXTI9_5, resources = [echo])]
+    fn receive_echo(cx:  receive_echo::Context) {
+        static mut TEST_VALUE: bool = false;
+        if cx.resources.echo.check_interrupt() { 
+            cx.resources.echo.clear_interrupt_pending_bit();
+            if cx.resources.echo.is_high().unwrap() {
+                *TEST_VALUE = true;
+            } else {
+                *TEST_VALUE = false;
+            }
+        }
+    }
 
     extern "C" {
         fn EXTI0();
