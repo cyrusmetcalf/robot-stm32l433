@@ -5,20 +5,19 @@ use panic_halt as _;
 
 //use core::time::Duration;
 use cortex_m::peripheral::DWT;
+use rtic::cyccnt::U32Ext;
+use servo_controller::ServoController;
 use stm32l4xx_hal::{
+    gpio::{Edge, Input, Output, PullDown, PushPull},
     gpio::{PB13, PB6},
-    gpio::{Output,Input, PushPull, PullDown, Edge},
+    interrupt,
     pac::USART2,
     prelude::*,
     serial,
     serial::{Config, Serial},
-    interrupt,
 };
-use rtic::cyccnt::{U32Ext};
-use servo_controller::ServoController;
 
-
-const SYSTEM_CLOCK_HZ: u32 = 80_000_000;
+const SYSTEM_CLOCK: u32 = 80_000_000;
 
 #[rtic::app(device = stm32l4xx_hal::stm32,peripherals=true, monotonic = rtic::cyccnt::CYCCNT)]
 const APP: () = {
@@ -26,7 +25,7 @@ const APP: () = {
         rx: serial::Rx<USART2>,
         tx: serial::Tx<USART2>,
         led: PB13<Output<PushPull>>,
-        echo: PB6<Input<PullDown>>, 
+        echo: PB6<Input<PullDown>>,
     }
 
     #[init(schedule = [heartbeat])]
@@ -50,8 +49,8 @@ const APP: () = {
         let mut pwr = dp.PWR.constrain(&mut rcc.apb1r1);
         let clocks = rcc
             .cfgr
-            .sysclk(SYSTEM_CLOCK_HZ.hz())
-            .hclk(SYSTEM_CLOCK_HZ.hz())
+            .sysclk(SYSTEM_CLOCK.hz())
+            .hclk(SYSTEM_CLOCK.hz())
             .freeze(&mut flash.acr, &mut pwr);
 
         // GPIO
@@ -98,23 +97,23 @@ const APP: () = {
         let _servo_one = ServoController::new(pwm1, SERVO_PWM_FREQUENCY);
         let _servo_two = ServoController::new(pwm2, SERVO_PWM_FREQUENCY);
 
-
         // Range Finder
-        
+
         // we need an edge-triggered interrupt that measures how long it was held high.
-        let mut echo = gpiob.pb6.into_pull_down_input(&mut gpiob.moder, &mut gpiob.pupdr);
+        let mut echo = gpiob
+            .pb6
+            .into_pull_down_input(&mut gpiob.moder, &mut gpiob.pupdr);
         echo.make_interrupt_source(&mut dp.SYSCFG, &mut rcc.apb2);
         echo.trigger_on_edge(&mut dp.EXTI, Edge::RISING_FALLING);
         echo.enable_interrupt(&mut dp.EXTI);
 
         rtic::pend(interrupt::EXTI9_5);
 
-
         // Scheduled Tasks
         cx.schedule
-            .heartbeat(cx.start + SYSTEM_CLOCK_HZ.cycles())
+            .heartbeat(cx.start + SYSTEM_CLOCK.cycles())
             .unwrap();
-        init::LateResources { tx, rx, led, echo}
+        init::LateResources { tx, rx, led, echo }
     }
 
     #[task(schedule = [heartbeat], resources = [led] )]
@@ -132,14 +131,14 @@ const APP: () = {
         }
 
         cx.schedule
-            .heartbeat(cx.scheduled + SYSTEM_CLOCK_HZ.cycles())
+            .heartbeat(cx.scheduled + SYSTEM_CLOCK.cycles())
             .unwrap();
     }
 
     #[task(binds = EXTI9_5, resources = [echo])]
-    fn receive_echo(cx:  receive_echo::Context) {
+    fn receive_echo(cx: receive_echo::Context) {
         static mut TEST_VALUE: bool = false;
-        if cx.resources.echo.check_interrupt() { 
+        if cx.resources.echo.check_interrupt() {
             cx.resources.echo.clear_interrupt_pending_bit();
             if cx.resources.echo.is_high().unwrap() {
                 *TEST_VALUE = true;
@@ -153,4 +152,3 @@ const APP: () = {
         fn EXTI0();
     }
 };
-
