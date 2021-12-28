@@ -3,22 +3,22 @@
 
 use panic_halt as _;
 
-//use core::time::Duration;
 use cortex_m::peripheral::DWT;
 use rtic::cyccnt::U32Ext;
 use servo_controller::ServoController;
 
-use nb::block;
+//use nb::block;
 use stm32l4xx_hal::{
     self,
     gpio::{Edge, Input, Output, PullDown, PushPull},
     gpio::{PB13, PB6},
     interrupt,
+    pac::TIM6,
     pac::USART2,
     prelude::*,
     serial,
     serial::{Config, Serial},
-    time::MonoTimer,
+    time::{Instant, MonoTimer},
     timer::Timer,
 };
 
@@ -31,6 +31,8 @@ const APP: () = {
         tx: serial::Tx<USART2>,
         led: PB13<Output<PushPull>>,
         echo: PB6<Input<PullDown>>,
+        duration_timer: MonoTimer,
+        delay_timer: Timer<TIM6>,
     }
 
     #[init(schedule = [heartbeat])]
@@ -59,16 +61,15 @@ const APP: () = {
             .freeze(&mut flash.acr, &mut pwr);
 
         //Delay Provider
-        let mut delay_timer = Timer::tim6(dp.TIM6, SYSTEM_CLOCK.hz(), clocks, &mut rcc.apb1r1);
+        let delay_timer = Timer::tim6(dp.TIM6, SYSTEM_CLOCK.hz(), clocks, &mut rcc.apb1r1);
 
         //General Purpose Duration Timer
         let duration_timer = MonoTimer::new(cx.core.DWT, clocks);
-        let start = duration_timer.now();
 
-        delay_timer.start(1000);
-        block!(delay_timer.wait()).unwrap();
+        //delay_timer.start(1000);
+        //block!(delay_timer.wait()).unwrap();
 
-        let end = start.elapsed();
+        //let end = start.elapsed();
 
         // GPIO
         let mut gpioa = dp.GPIOA.split(&mut rcc.ahb2);
@@ -130,7 +131,14 @@ const APP: () = {
         cx.schedule
             .heartbeat(cx.start + SYSTEM_CLOCK.cycles())
             .unwrap();
-        init::LateResources { tx, rx, led, echo }
+        init::LateResources {
+            tx,
+            rx,
+            led,
+            echo,
+            duration_timer,
+            delay_timer,
+        }
     }
 
     #[task(schedule = [heartbeat], resources = [led] )]
@@ -158,17 +166,33 @@ const APP: () = {
     //    // 1.) send 10us pulse over a GPIO pin.
     //    // 2.)
     //}
+    //
 
-    #[task(binds = EXTI9_5, resources = [echo])]
+    #[task]
+    fn timer_function_thing(_cx: timer_function_thing::Context, start_time: Option<Instant>) {
+        static mut STOPWATCH: Option<Instant> = None;
+        static mut ELAPSED_TIME: u32 = 0;
+
+        if start_time.is_some() {
+            *STOPWATCH = start_time;
+        } else {
+            match *STOPWATCH {
+                Some(timer) => *ELAPSED_TIME = timer.elapsed(),
+                _ => (),
+            }
+        }
+    }
+
+    #[task(binds = EXTI9_5, spawn = [timer_function_thing], resources = [echo, duration_timer])]
     fn receive_echo(cx: receive_echo::Context) {
-        static mut TEST_VALUE: bool = false;
         if cx.resources.echo.check_interrupt() {
             cx.resources.echo.clear_interrupt_pending_bit();
-            if cx.resources.echo.is_high().unwrap() {
-                *TEST_VALUE = true;
+            let better_name_tbd = if cx.resources.echo.is_high().unwrap() {
+                Some(cx.resources.duration_timer.now())
             } else {
-                *TEST_VALUE = false;
-            }
+                None
+            };
+            cx.spawn.timer_function_thing(better_name_tbd).unwrap();
         }
     }
 
