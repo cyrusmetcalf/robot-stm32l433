@@ -33,6 +33,7 @@ const APP: () = {
         echo: PB6<Input<PullDown>>,
         duration_timer: MonoTimer,
         delay_timer: Timer<TIM6>,
+        range_measure_counts: u32,
     }
 
     #[init(schedule = [heartbeat])]
@@ -138,6 +139,7 @@ const APP: () = {
             echo,
             duration_timer,
             delay_timer,
+            range_measure_counts: 0,
         }
     }
 
@@ -168,30 +170,24 @@ const APP: () = {
     //}
     //
 
-    #[task]
-    fn measure_time(_cx: measure_time::Context, start_time: Option<Instant>) {
-        static mut START_TIME: Option<Instant> = None;
-        static mut ELAPSED_TIME: u32 = 0;
-
-        if start_time.is_some() {
-            *START_TIME = start_time;
-        } else {
-            match *START_TIME {
-                Some(timer) => *ELAPSED_TIME = timer.elapsed(),
-                _ => (),
-            }
-        }
-    }
-
-    #[task(binds = EXTI9_5, spawn = [measure_time], resources = [echo, duration_timer])]
+    #[task(binds = EXTI9_5, resources = [echo, duration_timer, range_measure_counts])]
     fn receive_echo(cx: receive_echo::Context) {
+        static mut START_TIME: Option<Instant> = None;
+
         if cx.resources.echo.check_interrupt() {
             cx.resources.echo.clear_interrupt_pending_bit();
-            let pin_state = cx.resources.echo.is_high().unwrap();
-            let now = Some(cx.resources.duration_timer.now());
-            let stopwatch = if pin_state { now } else { None };
 
-            cx.spawn.measure_time(stopwatch).unwrap();
+            let pin_is_high = cx.resources.echo.is_high().unwrap();
+            let now = Some(cx.resources.duration_timer.now());
+
+            *START_TIME = if pin_is_high {
+                now
+            } else {
+                if let Some(timer) = *START_TIME {
+                    *cx.resources.range_measure_counts = timer.elapsed();
+                }
+                None
+            };
         }
     }
 
