@@ -169,30 +169,29 @@ const APP: () = {
     //
 
     #[task]
-    fn timer_function_thing(_cx: timer_function_thing::Context, start_time: Option<Instant>) {
-        static mut STOPWATCH: Option<Instant> = None;
+    fn measure_time(_cx: measure_time::Context, start_time: Option<Instant>) {
+        static mut START_TIME: Option<Instant> = None;
         static mut ELAPSED_TIME: u32 = 0;
 
         if start_time.is_some() {
-            *STOPWATCH = start_time;
+            *START_TIME = start_time;
         } else {
-            match *STOPWATCH {
+            match *START_TIME {
                 Some(timer) => *ELAPSED_TIME = timer.elapsed(),
                 _ => (),
             }
         }
     }
 
-    #[task(binds = EXTI9_5, spawn = [timer_function_thing], resources = [echo, duration_timer])]
+    #[task(binds = EXTI9_5, spawn = [measure_time], resources = [echo, duration_timer])]
     fn receive_echo(cx: receive_echo::Context) {
         if cx.resources.echo.check_interrupt() {
             cx.resources.echo.clear_interrupt_pending_bit();
-            let better_name_tbd = if cx.resources.echo.is_high().unwrap() {
-                Some(cx.resources.duration_timer.now())
-            } else {
-                None
-            };
-            cx.spawn.timer_function_thing(better_name_tbd).unwrap();
+            let pin_state = cx.resources.echo.is_high().unwrap();
+            let now = Some(cx.resources.duration_timer.now());
+            let stopwatch = if pin_state { now } else { None };
+
+            cx.spawn.measure_time(stopwatch).unwrap();
         }
     }
 
