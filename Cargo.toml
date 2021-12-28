@@ -28,6 +28,7 @@ embedded-hal = "^0.2.4"
 panic-halt = "^0.2.0" 
 generic-array = "0.14.4"
 heapless = "0.6.1"
+nb = "1.0.0"
 
 servo_controller = { path = "../servo_controller" }
 

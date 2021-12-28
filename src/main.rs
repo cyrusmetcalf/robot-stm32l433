@@ -7,7 +7,10 @@ use panic_halt as _;
 use cortex_m::peripheral::DWT;
 use rtic::cyccnt::U32Ext;
 use servo_controller::ServoController;
+
+use nb::block;
 use stm32l4xx_hal::{
+    self,
     gpio::{Edge, Input, Output, PullDown, PushPull},
     gpio::{PB13, PB6},
     interrupt,
@@ -15,6 +18,7 @@ use stm32l4xx_hal::{
     prelude::*,
     serial,
     serial::{Config, Serial},
+    timer::Timer,
 };
 
 const SYSTEM_CLOCK: u32 = 80_000_000;
@@ -52,6 +56,12 @@ const APP: () = {
             .sysclk(SYSTEM_CLOCK.hz())
             .hclk(SYSTEM_CLOCK.hz())
             .freeze(&mut flash.acr, &mut pwr);
+        
+        //Delay Provider
+        let mut timer = Timer::tim6(dp.TIM6, SYSTEM_CLOCK.hz(), clocks, &mut rcc.apb1r1);
+
+        timer.start(1000);
+        block!(timer.wait()).unwrap();
 
         // GPIO
         let mut gpioa = dp.GPIOA.split(&mut rcc.ahb2);
@@ -133,6 +143,14 @@ const APP: () = {
         cx.schedule
             .heartbeat(cx.scheduled + SYSTEM_CLOCK.cycles())
             .unwrap();
+    }
+
+    #[task(schedule = [send_sonar_ping])] 
+    fn send_sonar_ping(cx: send_sonar_ping::Context) {
+        // this task kicks the whole thing off. 
+        // 1.) send 10us pulse over a GPIO pin. 
+        // 2.) 
+
     }
 
     #[task(binds = EXTI9_5, resources = [echo])]
