@@ -3,26 +3,33 @@
 
 use panic_halt as _;
 
+use core::fmt::Write;
 use cortex_m::peripheral::DWT;
 use rtic::cyccnt::U32Ext;
 use servo_controller::ServoController;
 
-//use nb::block;
 use stm32l4xx_hal::{
     self,
     gpio::{Edge, Input, Output, PullDown, PushPull},
-    gpio::{PB13, PB6},
+    gpio::{PA8, PB13, PB6},
     interrupt,
     pac::TIM6,
     pac::USART2,
     prelude::*,
     serial,
     serial::{Config, Serial},
-    time::{Instant, MonoTimer},
+    time::{Hertz, Instant, MonoTimer},
     timer::Timer,
 };
 
 const SYSTEM_CLOCK: u32 = 80_000_000;
+
+// Speed of Sound in cm/ms @ standard temperature/pressure, non-adjusted.
+const SPEED_OF_SOUND: f32 = 34.3;
+
+fn measured_range(echo_length_ms: f32) -> f32 {
+    echo_length_ms * SPEED_OF_SOUND / 2.0
+}
 
 #[rtic::app(device = stm32l4xx_hal::stm32,peripherals=true, monotonic = rtic::cyccnt::CYCCNT)]
 const APP: () = {
@@ -30,13 +37,14 @@ const APP: () = {
         rx: serial::Rx<USART2>,
         tx: serial::Tx<USART2>,
         led: PB13<Output<PushPull>>,
+        ping_pong_pin: PA8<Output<PushPull>>,
         echo: PB6<Input<PullDown>>,
         duration_timer: MonoTimer,
         delay_timer: Timer<TIM6>,
-        range_measure_counts: u32,
+        range: f32,
     }
 
-    #[init(schedule = [heartbeat])]
+    #[init(schedule = [heartbeat, print_status, ping])]
     fn init(mut cx: init::Context) -> init::LateResources {
         let mut dp = cx.device;
 
@@ -126,21 +134,48 @@ const APP: () = {
         echo.trigger_on_edge(&mut dp.EXTI, Edge::RISING_FALLING);
         echo.enable_interrupt(&mut dp.EXTI);
 
+        // and we need a pin to trigger the ping, pulse 10us every 60ms
+        let mut ping_pong_pin = gpioa
+            .pa8
+            .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper);
+
+        ping_pong_pin.set_low().unwrap();
+
         rtic::pend(interrupt::EXTI9_5);
 
         // Scheduled Tasks
         cx.schedule
             .heartbeat(cx.start + SYSTEM_CLOCK.cycles())
             .unwrap();
+
+        cx.schedule
+            .print_status(cx.start + (SYSTEM_CLOCK / 2).cycles())
+            .unwrap();
+
+        cx.schedule.ping(cx.start).unwrap();
+
         init::LateResources {
             tx,
             rx,
             led,
+            ping_pong_pin,
             echo,
             duration_timer,
             delay_timer,
-            range_measure_counts: 0,
+            range: 0.0_f32,
         }
+    }
+
+    #[task(schedule = [print_status], resources = [tx, range])]
+    fn print_status(cx: print_status::Context) {
+        let tx = cx.resources.tx;
+        let range = cx.resources.range;
+        write!(tx, "measured range: {:.2}cm\r", range).unwrap();
+
+        // print every 1 second
+        cx.schedule
+            .print_status(cx.scheduled + SYSTEM_CLOCK.cycles())
+            .unwrap();
     }
 
     #[task(schedule = [heartbeat], resources = [led] )]
@@ -162,29 +197,39 @@ const APP: () = {
             .unwrap();
     }
 
-    //#[task(schedule = [send_sonar_ping])]
-    //fn send_sonar_ping(cx: send_sonar_ping::Context) {
-    //    // this task kicks the whole thing off.
-    //    // 1.) send 10us pulse over a GPIO pin.
-    //    // 2.)
-    //}
-    //
+    #[task(schedule = [pong], resources = [ping_pong_pin])]
+    fn ping(cx: ping::Context) {
+        // HCSR04-23070007.pdf suggests 10uS pulse to trigger system
+        const NEXT: u32 = (SYSTEM_CLOCK / 1_000_000) * 10;
+        cx.resources.ping_pong_pin.set_high().unwrap();
+        cx.schedule.pong(cx.scheduled + NEXT.cycles()).unwrap();
+    }
 
-    #[task(binds = EXTI9_5, resources = [echo, duration_timer, range_measure_counts])]
+    #[task(schedule = [ping], resources = [ping_pong_pin])]
+    fn pong(cx: pong::Context) {
+        // HCSR04-23070007.pdf suggests >60ms measurement cycle.
+        const NEXT: u32 = (SYSTEM_CLOCK / 1000) * 60;
+        cx.resources.ping_pong_pin.set_low().unwrap();
+        cx.schedule.ping(cx.scheduled + NEXT.cycles()).unwrap();
+    }
+
+    #[task(binds = EXTI9_5, resources = [echo, duration_timer, range])]
     fn receive_echo(cx: receive_echo::Context) {
         static mut START_TIME: Option<Instant> = None;
-
         if cx.resources.echo.check_interrupt() {
             cx.resources.echo.clear_interrupt_pending_bit();
 
-            let pin_is_high = cx.resources.echo.is_high().unwrap();
-            let now = Some(cx.resources.duration_timer.now());
+            let pin = cx.resources.echo;
+            let tim = cx.resources.duration_timer;
+            let output = cx.resources.range;
 
-            *START_TIME = if pin_is_high {
-                now
+            *START_TIME = if pin.is_high().unwrap() {
+                Some(tim.now())
             } else {
-                if let Some(timer) = *START_TIME {
-                    *cx.resources.range_measure_counts = timer.elapsed();
+                if let Some(get_time) = *START_TIME {
+                    let Hertz(freq) = tim.frequency();
+                    let pulse_time_ms = 1000.0 * get_time.elapsed() as f32 / freq as f32;
+                    *output = measured_range(pulse_time_ms);
                 }
                 None
             };
