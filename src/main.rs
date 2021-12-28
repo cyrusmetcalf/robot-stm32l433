@@ -18,6 +18,7 @@ use stm32l4xx_hal::{
     prelude::*,
     serial,
     serial::{Config, Serial},
+    time::MonoTimer,
     timer::Timer,
 };
 
@@ -56,12 +57,18 @@ const APP: () = {
             .sysclk(SYSTEM_CLOCK.hz())
             .hclk(SYSTEM_CLOCK.hz())
             .freeze(&mut flash.acr, &mut pwr);
-        
-        //Delay Provider
-        let mut timer = Timer::tim6(dp.TIM6, SYSTEM_CLOCK.hz(), clocks, &mut rcc.apb1r1);
 
-        timer.start(1000);
-        block!(timer.wait()).unwrap();
+        //Delay Provider
+        let mut delay_timer = Timer::tim6(dp.TIM6, SYSTEM_CLOCK.hz(), clocks, &mut rcc.apb1r1);
+
+        //General Purpose Duration Timer
+        let duration_timer = MonoTimer::new(cx.core.DWT, clocks);
+        let start = duration_timer.now();
+
+        delay_timer.start(1000);
+        block!(delay_timer.wait()).unwrap();
+
+        let end = start.elapsed();
 
         // GPIO
         let mut gpioa = dp.GPIOA.split(&mut rcc.ahb2);
@@ -145,13 +152,12 @@ const APP: () = {
             .unwrap();
     }
 
-    #[task(schedule = [send_sonar_ping])] 
-    fn send_sonar_ping(cx: send_sonar_ping::Context) {
-        // this task kicks the whole thing off. 
-        // 1.) send 10us pulse over a GPIO pin. 
-        // 2.) 
-
-    }
+    //#[task(schedule = [send_sonar_ping])]
+    //fn send_sonar_ping(cx: send_sonar_ping::Context) {
+    //    // this task kicks the whole thing off.
+    //    // 1.) send 10us pulse over a GPIO pin.
+    //    // 2.)
+    //}
 
     #[task(binds = EXTI9_5, resources = [echo])]
     fn receive_echo(cx: receive_echo::Context) {
