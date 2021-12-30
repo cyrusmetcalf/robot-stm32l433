@@ -11,7 +11,7 @@ use servo_controller::ServoController;
 use stm32l4xx_hal::{
     self,
     gpio::{Edge, Input, Output, PullDown, PushPull},
-    gpio::{PA8, PB13, PB6},
+    gpio::{PB1, PB13, PB6},
     interrupt,
     pac::USART2,
     prelude::*,
@@ -35,7 +35,7 @@ const APP: () = {
         rx: serial::Rx<USART2>,
         tx: serial::Tx<USART2>,
         led: PB13<Output<PushPull>>,
-        ping_pong_pin: PA8<Output<PushPull>>,
+        ping_pong_pin: PB1<Output<PushPull>>,
         echo: PB6<Input<PullDown>>,
         duration_timer: MonoTimer,
         range: f32,
@@ -95,23 +95,57 @@ const APP: () = {
 
         let (tx, rx) = serial2.split();
 
-        // PWM channel
-        const SERVO_PWM_FREQUENCY: u32 = 50_u32; // Hz
-        let c1 = gpioa
+        //RGB Light Controller;
+        const RGB_LED_PWM_FREQUENCY: u32 = 50_u32; // Hz
+
+        // TIM1 CH1
+        let red_pin = gpioa
+            .pa8
+            .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper)
+            .into_af1(&mut gpioa.moder, &mut gpioa.afrh);
+
+        // TIM1 CH2
+        let green_pin = gpioa
+            .pa9
+            .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper)
+            .into_af1(&mut gpioa.moder, &mut gpioa.afrh);
+
+        // TIM1 CH3
+        let blue_pin = gpioa
+            .pa10
+            .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper)
+            .into_af1(&mut gpioa.moder, &mut gpioa.afrh);
+
+        let pwms = dp.TIM1.pwm(
+            (red_pin, green_pin, blue_pin),
+            RGB_LED_PWM_FREQUENCY.hz(),
+            clocks,
+            &mut rcc.apb2,
+        );
+
+        // Design Decision:  PA1/PA0 assigned to drive servo motors.
+        // TIM2 CH3/CH4 conflict with Usart2 TX/RX pin assignments on PA2/PA3,
+        // and for this reason may not be used.  The servo controls require only
+        // two channels.
+
+        // TIM2 CH1
+        let left_wheel_pin = gpioa
             .pa0
             .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper)
             .into_af1(&mut gpioa.moder, &mut gpioa.afrl);
 
-        let c2 = gpioa
+        // TIM2 CH2
+        let right_wheel_pin = gpioa
             .pa1
             .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper)
             .into_af1(&mut gpioa.moder, &mut gpioa.afrl);
-        let (pwm1, pwm2) = dp
-            .TIM2
-            .pwm((c1, c2), SERVO_PWM_FREQUENCY.hz(), clocks, &mut rcc.apb1r1);
 
-        let _servo_one = ServoController::new(pwm1, SERVO_PWM_FREQUENCY);
-        let _servo_two = ServoController::new(pwm2, SERVO_PWM_FREQUENCY);
+        let (left_wheel, right_wheel) = dp.TIM2.pwm(
+            (left_wheel_pin, right_wheel_pin),
+            RGB_LED_PWM_FREQUENCY.hz(),
+            clocks,
+            &mut rcc.apb1r1,
+        );
 
         // Range Finder
 
@@ -124,9 +158,9 @@ const APP: () = {
         echo.enable_interrupt(&mut dp.EXTI);
 
         // and we need a pin to trigger the ping, pulse 10us every 60ms
-        let mut ping_pong_pin = gpioa
-            .pa8
-            .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper);
+        let mut ping_pong_pin = gpiob
+            .pb1
+            .into_push_pull_output(&mut gpiob.moder, &mut gpiob.otyper);
 
         ping_pong_pin.set_low().unwrap();
 
