@@ -13,13 +13,11 @@ use stm32l4xx_hal::{
     gpio::{Edge, Input, Output, PullDown, PushPull},
     gpio::{PA8, PB13, PB6},
     interrupt,
-    pac::TIM6,
     pac::USART2,
     prelude::*,
     serial,
     serial::{Config, Serial},
     time::{Hertz, Instant, MonoTimer},
-    timer::Timer,
 };
 
 const SYSTEM_CLOCK: u32 = 80_000_000;
@@ -40,7 +38,6 @@ const APP: () = {
         ping_pong_pin: PA8<Output<PushPull>>,
         echo: PB6<Input<PullDown>>,
         duration_timer: MonoTimer,
-        delay_timer: Timer<TIM6>,
         range: f32,
     }
 
@@ -69,16 +66,8 @@ const APP: () = {
             .hclk(SYSTEM_CLOCK.hz())
             .freeze(&mut flash.acr, &mut pwr);
 
-        //Delay Provider
-        let delay_timer = Timer::tim6(dp.TIM6, SYSTEM_CLOCK.hz(), clocks, &mut rcc.apb1r1);
-
         //General Purpose Duration Timer
         let duration_timer = MonoTimer::new(cx.core.DWT, clocks);
-
-        //delay_timer.start(1000);
-        //block!(delay_timer.wait()).unwrap();
-
-        //let end = start.elapsed();
 
         // GPIO
         let mut gpioa = dp.GPIOA.split(&mut rcc.ahb2);
@@ -161,7 +150,6 @@ const APP: () = {
             ping_pong_pin,
             echo,
             duration_timer,
-            delay_timer,
             range: 0.0_f32,
         }
     }
@@ -196,6 +184,7 @@ const APP: () = {
             .heartbeat(cx.scheduled + SYSTEM_CLOCK.cycles())
             .unwrap();
     }
+
 
     #[task(schedule = [pong], resources = [ping_pong_pin])]
     fn ping(cx: ping::Context) {
