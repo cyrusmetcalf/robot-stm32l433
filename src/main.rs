@@ -6,15 +6,18 @@ use panic_halt as _;
 use core::fmt::Write;
 use cortex_m::peripheral::DWT;
 use rtic::cyccnt::U32Ext;
-use servo_controller::ServoController;
+
+use embedded_hal::PwmPin;
 
 use stm32l4xx_hal::{
     self,
     gpio::{Edge, Input, Output, PullDown, PushPull},
     gpio::{PB1, PB13, PB6},
     interrupt,
-    pac::USART2,
+    pac::{TIM1, USART2},
     prelude::*,
+    pwm::Pwm,
+    pwm::{C1, C2, C3},
     serial,
     serial::{Config, Serial},
     time::{Hertz, Instant, MonoTimer},
@@ -29,6 +32,37 @@ fn measured_range(echo_length_ms: f32) -> f32 {
     echo_length_ms * SPEED_OF_SOUND / 2.0
 }
 
+// This prototype should be extracted
+pub struct RgbController<R, G, B> {
+    red: R,
+    green: G,
+    blue: B,
+}
+
+impl<T, R: PwmPin<Duty = T>, G: PwmPin<Duty = T>, B: PwmPin<Duty = T>> RgbController<R, G, B> {
+    pub fn new(red: R, green: G, blue: B) -> RgbController<R, G, B> {
+        RgbController { red, green, blue }
+    }
+
+    pub fn enable(&mut self) {
+        self.red.enable();
+        self.green.enable();
+        self.blue.enable();
+    }
+
+    pub fn disable(&mut self) {
+        self.red.disable();
+        self.green.disable();
+        self.blue.disable();
+    }
+
+    pub fn set_color_rgb(&mut self, red_level: T, green_level: T, blue_level: T) {
+        self.red.set_duty(red_level);
+        self.blue.set_duty(blue_level);
+        self.green.set_duty(green_level);
+    }
+}
+
 #[rtic::app(device = stm32l4xx_hal::stm32,peripherals=true, monotonic = rtic::cyccnt::CYCCNT)]
 const APP: () = {
     struct Resources {
@@ -39,6 +73,7 @@ const APP: () = {
         echo: PB6<Input<PullDown>>,
         duration_timer: MonoTimer,
         range: f32,
+        light_controller: RgbController<Pwm<TIM1, C1>, Pwm<TIM1, C2>, Pwm<TIM1, C3>>,
     }
 
     #[init(schedule = [heartbeat, print_status, ping])]
@@ -96,6 +131,7 @@ const APP: () = {
         let (tx, rx) = serial2.split();
 
         //RGB Light Controller;
+        //Timer 1 - 16-bit timer.  Channels 1,2,3
         const RGB_LED_PWM_FREQUENCY: u32 = 50_u32; // Hz
 
         // TIM1 CH1
@@ -116,12 +152,15 @@ const APP: () = {
             .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper)
             .into_af1(&mut gpioa.moder, &mut gpioa.afrh);
 
-        let pwms = dp.TIM1.pwm(
+        let (red, green, blue) = dp.TIM1.pwm(
             (red_pin, green_pin, blue_pin),
             RGB_LED_PWM_FREQUENCY.hz(),
             clocks,
             &mut rcc.apb2,
         );
+
+        let mut light_controller = RgbController::new(red, green, blue);
+        light_controller.enable();
 
         // Design Decision:  PA1/PA0 assigned to drive servo motors.
         // TIM2 CH3/CH4 conflict with Usart2 TX/RX pin assignments on PA2/PA3,
@@ -185,6 +224,7 @@ const APP: () = {
             echo,
             duration_timer,
             range: 0.0_f32,
+            light_controller,
         }
     }
 
