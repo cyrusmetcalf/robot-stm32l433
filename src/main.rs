@@ -185,7 +185,6 @@ const APP: () = {
             .unwrap();
     }
 
-
     #[task(schedule = [pong], resources = [ping_pong_pin])]
     fn ping(cx: ping::Context) {
         // HCSR04-23070007.pdf suggests 10uS pulse to trigger system
