@@ -77,7 +77,7 @@ const APP: () = {
         light_controller: RgbController<Pwm<TIM1, C1>, Pwm<TIM1, C2>, Pwm<TIM1, C3>>,
     }
 
-    #[init(schedule = [heartbeat, print_status, ping])]
+    #[init(schedule = [heartbeat, print_status, ping, disco_mode])]
     fn init(mut cx: init::Context) -> init::LateResources {
         let mut dp = cx.device;
 
@@ -105,35 +105,33 @@ const APP: () = {
         //General Purpose Duration Timer
         let duration_timer = MonoTimer::new(cx.core.DWT, clocks);
 
-        // GPIO
+        // GPIO Bank Initialization
         let mut gpioa = dp.GPIOA.split(&mut rcc.ahb2);
         let mut gpiob = dp.GPIOB.split(&mut rcc.ahb2);
 
-        // LED
+        // General Purpose/Heart-beat LED
         let led = gpiob
             .pb13
             .into_push_pull_output(&mut gpiob.moder, &mut gpiob.otyper);
 
-        // USART 2
-        let tx = gpioa.pa2.into_af7(&mut gpioa.moder, &mut gpioa.afrl);
-        let rx = gpioa.pa3.into_af7(&mut gpioa.moder, &mut gpioa.afrl);
-        let pins = (tx, rx);
-
+        // Serial Communication with Virtual Comm Port USART 2
         let baudrate = 38_400.bps();
 
-        let serial2 = Serial::usart2(
+        let tx = gpioa.pa2.into_af7(&mut gpioa.moder, &mut gpioa.afrl);
+        let rx = gpioa.pa3.into_af7(&mut gpioa.moder, &mut gpioa.afrl);
+
+        let (tx, rx) = Serial::usart2(
             dp.USART2,
-            pins,
+            (tx, rx),
             Config::default().baudrate(baudrate),
             clocks,
             &mut rcc.apb1r1,
-        );
-
-        let (tx, rx) = serial2.split();
+        )
+        .split();
 
         //RGB Light Controller;
         //Timer 1 - 16-bit timer.  Channels 1,2,3
-        const RGB_LED_PWM_FREQUENCY: u32 = 50_u32; // Hz
+        const RGB_LED_PWM_FREQUENCY: u32 = 1_u32; // kHz
 
         // TIM1 CH1
         let red_pin = gpioa
@@ -155,13 +153,15 @@ const APP: () = {
 
         let (red, green, blue) = dp.TIM1.pwm(
             (red_pin, green_pin, blue_pin),
-            RGB_LED_PWM_FREQUENCY.hz(),
+            RGB_LED_PWM_FREQUENCY.khz(),
             clocks,
             &mut rcc.apb2,
         );
 
         let mut light_controller = RgbController::new(red, green, blue);
         light_controller.enable();
+
+        light_controller.set_color_rgb(u16::MAX, 0, 0);
 
         // Design Decision:  PA1/PA0 assigned to drive servo motors.
         // TIM2 CH3/CH4 conflict with Usart2 TX/RX pin assignments on PA2/PA3,
@@ -213,6 +213,10 @@ const APP: () = {
 
         cx.schedule
             .print_status(cx.start + (SYSTEM_CLOCK / 2).cycles())
+            .unwrap();
+
+        cx.schedule
+            .disco_mode(cx.start + (SYSTEM_CLOCK / 4).cycles())
             .unwrap();
 
         cx.schedule.ping(cx.start).unwrap();
@@ -297,6 +301,22 @@ const APP: () = {
                 None
             };
         }
+    }
+
+    #[task(schedule = [disco_mode], resources = [light_controller]) ]
+    fn disco_mode(cx: disco_mode::Context) {
+        static mut RED: u16 = 0;
+        static mut GREEN: u16 = 0;
+        static mut BLUE: u16 = 0;
+
+        // insert code here
+
+        let lc = cx.resources.light_controller;
+        lc.set_color_rgb(*RED, *GREEN, *BLUE);
+
+        cx.schedule
+            .disco_mode(cx.scheduled + (u16::MAX as u32 / 8).cycles())
+            .unwrap();
     }
 
     extern "C" {
