@@ -3,11 +3,10 @@
 
 use panic_halt as _;
 
+use crate::rgb_controller::RgbController;
 use core::fmt::Write;
 use cortex_m::peripheral::DWT;
 use rtic::cyccnt::U32Ext;
-
-use embedded_hal::PwmPin;
 
 use stm32l4xx_hal::{
     self,
@@ -32,34 +31,36 @@ fn measured_range(echo_length_ms: f32) -> f32 {
     echo_length_ms * SPEED_OF_SOUND / 2.0
 }
 
-// This prototype should be extracted
-pub struct RgbController<R, G, B> {
-    red: R,
-    green: G,
-    blue: B,
-}
-
-impl<T, R: PwmPin<Duty = T>, G: PwmPin<Duty = T>, B: PwmPin<Duty = T>> RgbController<R, G, B> {
-    pub fn new(red: R, green: G, blue: B) -> RgbController<R, G, B> {
-        RgbController { red, green, blue }
+pub mod rgb_controller {
+    use embedded_hal::PwmPin;
+    pub struct RgbController<R, G, B> {
+        red: R,
+        green: G,
+        blue: B,
     }
 
-    pub fn enable(&mut self) {
-        self.red.enable();
-        self.green.enable();
-        self.blue.enable();
-    }
+    impl<T, R: PwmPin<Duty = T>, G: PwmPin<Duty = T>, B: PwmPin<Duty = T>> RgbController<R, G, B> {
+        pub fn new(red: R, green: G, blue: B) -> RgbController<R, G, B> {
+            RgbController { red, green, blue }
+        }
 
-    pub fn disable(&mut self) {
-        self.red.disable();
-        self.green.disable();
-        self.blue.disable();
-    }
+        pub fn enable(&mut self) {
+            self.red.enable();
+            self.green.enable();
+            self.blue.enable();
+        }
 
-    pub fn set_color_rgb(&mut self, red_level: T, green_level: T, blue_level: T) {
-        self.red.set_duty(red_level);
-        self.blue.set_duty(blue_level);
-        self.green.set_duty(green_level);
+        pub fn disable(&mut self) {
+            self.red.disable();
+            self.green.disable();
+            self.blue.disable();
+        }
+
+        pub fn set_color_rgb(&mut self, red_level: T, green_level: T, blue_level: T) {
+            self.red.set_duty(red_level);
+            self.blue.set_duty(blue_level);
+            self.green.set_duty(green_level);
+        }
     }
 }
 
@@ -179,7 +180,7 @@ const APP: () = {
             .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper)
             .into_af1(&mut gpioa.moder, &mut gpioa.afrl);
 
-        let (left_wheel, right_wheel) = dp.TIM2.pwm(
+        let (_left_wheel, _right_wheel) = dp.TIM2.pwm(
             (left_wheel_pin, right_wheel_pin),
             RGB_LED_PWM_FREQUENCY.hz(),
             clocks,
