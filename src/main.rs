@@ -39,27 +39,41 @@ pub mod rgb_controller {
         blue: B,
     }
 
-    impl<T, R: PwmPin<Duty = T>, G: PwmPin<Duty = T>, B: PwmPin<Duty = T>> RgbController<R, G, B> {
-        pub fn new(red: R, green: G, blue: B) -> RgbController<R, G, B> {
-            RgbController { red, green, blue }
-        }
-
-        pub fn enable(&mut self) {
-            self.red.enable();
-            self.green.enable();
-            self.blue.enable();
-        }
-
-        pub fn disable(&mut self) {
+    impl<R: PwmPin, G: PwmPin, B: PwmPin>  embedded_hal::PwmPin for RgbController<R,G,B> {
+        type Duty = (R::Duty, G::Duty, B::Duty);
+        fn disable(&mut self) {
             self.red.disable();
             self.green.disable();
             self.blue.disable();
         }
+        fn enable(&mut self) {
+            self.red.enable();
+            self.green.enable();
+            self.blue.enable();
+        }
+        fn get_duty(&self) -> Self::Duty {
+            (self.red.get_duty(),self.green.get_duty(), self.blue.get_duty())
+        }
+        fn get_max_duty(&self) -> Self::Duty {
+            (self.red.get_max_duty(),self.green.get_max_duty(), self.blue.get_max_duty())
+
+        }
+        fn set_duty(&mut self, duty: Self::Duty) {
+            let (r,g,b) = duty;
+            self.red.set_duty(r);
+            self.green.set_duty(g);
+            self.blue.set_duty(b);
+        }
+
+    }
+
+    impl<T, R: PwmPin<Duty = T>, G: PwmPin<Duty = T>, B: PwmPin<Duty = T>> RgbController<R, G, B> {
+        pub fn new(rgb_pwm:(R,G,B)) -> RgbController<R, G, B> {
+            RgbController { red: rgb_pwm.0, green: rgb_pwm.1, blue: rgb_pwm.2 }
+        }
 
         pub fn set_color_rgb(&mut self, red_level: T, green_level: T, blue_level: T) {
-            self.red.set_duty(red_level);
-            self.blue.set_duty(blue_level);
-            self.green.set_duty(green_level);
+            self.set_duty((red_level,green_level,blue_level));
         }
     }
 }
@@ -151,18 +165,19 @@ const APP: () = {
             .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper)
             .into_af1(&mut gpioa.moder, &mut gpioa.afrh);
 
-        let (red, green, blue) = dp.TIM1.pwm(
+        // TIM1 PWM Initialization.
+        let rgb_pwms = dp.TIM1.pwm(
             (red_pin, green_pin, blue_pin),
             RGB_LED_PWM_FREQUENCY.khz(),
             clocks,
             &mut rcc.apb2,
         );
 
-        let mut light_controller = RgbController::new(red, green, blue);
+        let mut light_controller = RgbController::new(rgb_pwms);
         light_controller.enable();
+        light_controller.set_duty((u16::MAX, 0, 0));
 
-        light_controller.set_color_rgb(u16::MAX, 0, 0);
-
+        
         // Design Decision:  PA1/PA0 assigned to drive servo motors.
         // TIM2 CH3/CH4 conflict with Usart2 TX/RX pin assignments on PA2/PA3,
         // and for this reason may not be used.  The servo controls require only
@@ -308,6 +323,8 @@ const APP: () = {
         static mut RED: u16 = 0;
         static mut GREEN: u16 = 0;
         static mut BLUE: u16 = 0;
+
+
 
         // insert code here
 
