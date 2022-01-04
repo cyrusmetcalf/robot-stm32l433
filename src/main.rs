@@ -5,15 +5,15 @@ use panic_halt as _;
 
 use core::fmt::Write;
 use cortex_m::peripheral::DWT;
+use robot_stm32l433::rgb_controller::{RgbController, Wheels};
 use rtic::cyccnt::U32Ext;
-use robot_stm32l433::rgb_controller::RgbController;
 
 use stm32l4xx_hal::{
     self,
     gpio::{Edge, Input, Output, PullDown, PushPull},
     gpio::{PB1, PB13, PB6},
     interrupt,
-    pac::{TIM1, USART2},
+    pac::{TIM1, TIM2, USART2},
     prelude::*,
     pwm::Pwm,
     pwm::{C1, C2, C3},
@@ -42,6 +42,7 @@ const APP: () = {
         duration_timer: MonoTimer,
         range: f32,
         light_controller: RgbController<Pwm<TIM1, C1>, Pwm<TIM1, C2>, Pwm<TIM1, C3>>,
+        wheel_controller: Wheels<Pwm<TIM2, C1>, Pwm<TIM2, C2>>,
     }
 
     #[init(schedule = [heartbeat, print_status, ping, disco_mode])]
@@ -147,12 +148,15 @@ const APP: () = {
             .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper)
             .into_af1(&mut gpioa.moder, &mut gpioa.afrl);
 
-        let (_left_wheel, _right_wheel) = dp.TIM2.pwm(
+        let wheel_pins = dp.TIM2.pwm(
             (left_wheel_pin, right_wheel_pin),
             RGB_LED_PWM_FREQUENCY.hz(),
             clocks,
             &mut rcc.apb1r1,
         );
+
+        let mut wheel_controller = Wheels::new(wheel_pins);
+        wheel_controller.enable();
 
         // Range Finder
 
@@ -197,6 +201,7 @@ const APP: () = {
             duration_timer,
             range: 0.0_f32,
             light_controller,
+            wheel_controller,
         }
     }
 
