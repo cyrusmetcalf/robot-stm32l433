@@ -5,7 +5,7 @@ use panic_halt as _;
 
 use core::fmt::Write;
 use cortex_m::peripheral::DWT;
-use robot_stm32l433::rgb_controller::{RgbController, Wheels};
+use robot_stm32l433::rgb_controller::{RgbController, SixColor};
 use rtic::cyccnt::U32Ext;
 
 use stm32l4xx_hal::{
@@ -42,7 +42,6 @@ const APP: () = {
         duration_timer: MonoTimer,
         range: f32,
         light_controller: RgbController<Pwm<TIM1, C1>, Pwm<TIM1, C2>, Pwm<TIM1, C3>>,
-        wheel_controller: Wheels<Pwm<TIM2, C1>, Pwm<TIM2, C2>>,
     }
 
     #[init(schedule = [heartbeat, print_status, ping])]
@@ -129,7 +128,6 @@ const APP: () = {
 
         let mut light_controller = RgbController(r, g, b);
         light_controller.enable();
-        light_controller.set_duty((u16::MAX, 0, 0));
 
         // Design Decision:  PA1/PA0 assigned to drive servo motors.
         // TIM2 CH3/CH4 conflict with Usart2 TX/RX pin assignments on PA2/PA3,
@@ -148,16 +146,16 @@ const APP: () = {
             .into_push_pull_output(&mut gpioa.moder, &mut gpioa.otyper)
             .into_af1(&mut gpioa.moder, &mut gpioa.afrl);
 
-        let wheel_pins = dp.TIM2.pwm(
+        let _wheel_pins = dp.TIM2.pwm(
             (left_wheel_pin, right_wheel_pin),
             RGB_LED_PWM_FREQUENCY.hz(),
             clocks,
             &mut rcc.apb1r1,
         );
 
-        let mut wheel_controller = Wheels::new(wheel_pins);
-        wheel_controller.enable();
-
+//        let mut wheel_controller = Wheels::new(wheel_pins);
+//        wheel_controller.enable();
+//
         // Range Finder
 
         // we need an edge-triggered interrupt that measures how long it was held high.
@@ -201,7 +199,6 @@ const APP: () = {
             duration_timer,
             range: 0.0_f32,
             light_controller,
-            wheel_controller,
         }
     }
 
@@ -233,6 +230,28 @@ const APP: () = {
 
         cx.schedule
             .heartbeat(cx.scheduled + SYSTEM_CLOCK.cycles())
+            .unwrap();
+    }
+
+    #[task(schedule = [disco_mode], resources = [light_controller])]
+    fn disco_mode(cx: disco_mode::Context) {
+        static mut COUNTER: u32 = 0;
+
+        let lc = cx.resources.light_controller;
+
+        *COUNTER+=1;
+        match *COUNTER {
+            1 => lc.red(),
+            2 => lc.yellow(),
+            3 => lc.green(),
+            4 => lc.cyan(),
+            5 => lc.blue(),
+            6 => lc.magenta(),
+            _ => *COUNTER = 0,
+        }
+
+        cx.schedule
+            .disco_mode(cx.scheduled + SYSTEM_CLOCK.cycles())
             .unwrap();
     }
 
