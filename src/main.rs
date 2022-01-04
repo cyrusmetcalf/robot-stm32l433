@@ -45,7 +45,7 @@ const APP: () = {
         wheel_controller: Wheels<Pwm<TIM2, C1>, Pwm<TIM2, C2>>,
     }
 
-    #[init(schedule = [heartbeat, print_status, ping, disco_mode])]
+    #[init(schedule = [heartbeat, print_status, ping])]
     fn init(mut cx: init::Context) -> init::LateResources {
         let mut dp = cx.device;
 
@@ -120,14 +120,14 @@ const APP: () = {
             .into_af1(&mut gpioa.moder, &mut gpioa.afrh);
 
         // TIM1 PWM Initialization.
-        let rgb_pwms = dp.TIM1.pwm(
+        let (r, g, b) = dp.TIM1.pwm(
             (red_pin, green_pin, blue_pin),
             RGB_LED_PWM_FREQUENCY.khz(),
             clocks,
             &mut rcc.apb2,
         );
 
-        let mut light_controller = RgbController::new(rgb_pwms);
+        let mut light_controller = RgbController(r, g, b);
         light_controller.enable();
         light_controller.set_duty((u16::MAX, 0, 0));
 
@@ -186,9 +186,9 @@ const APP: () = {
             .print_status(cx.start + (SYSTEM_CLOCK / 2).cycles())
             .unwrap();
 
-        cx.schedule
-            .disco_mode(cx.start + (SYSTEM_CLOCK / 4).cycles())
-            .unwrap();
+        //cx.schedule
+        //    .disco_mode(cx.start + (SYSTEM_CLOCK / 4).cycles())
+        //    .unwrap();
 
         cx.schedule.ping(cx.start).unwrap();
 
@@ -273,22 +273,6 @@ const APP: () = {
                 None
             };
         }
-    }
-
-    #[task(schedule = [disco_mode], resources = [light_controller]) ]
-    fn disco_mode(cx: disco_mode::Context) {
-        static mut RED: u16 = 0;
-        static mut GREEN: u16 = 0;
-        static mut BLUE: u16 = 0;
-
-        // insert code here
-
-        let lc = cx.resources.light_controller;
-        lc.set_color_rgb(*RED, *GREEN, *BLUE);
-
-        cx.schedule
-            .disco_mode(cx.scheduled + (u16::MAX as u32 / 8).cycles())
-            .unwrap();
     }
 
     extern "C" {
