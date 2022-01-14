@@ -44,7 +44,7 @@ const APP: () = {
         light_controller: RgbController<Pwm<TIM1, C1>, Pwm<TIM1, C2>, Pwm<TIM1, C3>>,
     }
 
-    #[init(schedule = [heartbeat, print_status, ping])]
+    #[init(schedule = [heartbeat, print_status, ping, disco_mode])]
     fn init(mut cx: init::Context) -> init::LateResources {
         let mut dp = cx.device;
 
@@ -153,9 +153,9 @@ const APP: () = {
             &mut rcc.apb1r1,
         );
 
-//        let mut wheel_controller = Wheels::new(wheel_pins);
-//        wheel_controller.enable();
-//
+        //        let mut wheel_controller = Wheels::new(wheel_pins);
+        //        wheel_controller.enable();
+        //
         // Range Finder
 
         // we need an edge-triggered interrupt that measures how long it was held high.
@@ -175,19 +175,26 @@ const APP: () = {
 
         rtic::pend(interrupt::EXTI9_5);
 
+        //
         // Scheduled Tasks
+        //
+
+        // Heart Beat
         cx.schedule
             .heartbeat(cx.start + SYSTEM_CLOCK.cycles())
             .unwrap();
 
+        // Disco Mode - Cycles colors on LED in regular pattern
+        cx.schedule
+            .disco_mode(cx.start + SYSTEM_CLOCK.cycles())
+            .unwrap();
+
+        // Prints out status structure, currently only shows the range finder.
         cx.schedule
             .print_status(cx.start + (SYSTEM_CLOCK / 2).cycles())
             .unwrap();
 
-        //cx.schedule
-        //    .disco_mode(cx.start + (SYSTEM_CLOCK / 4).cycles())
-        //    .unwrap();
-
+        // Kick off the sonar ping/pong tasks to trigger range finder
         cx.schedule.ping(cx.start).unwrap();
 
         init::LateResources {
@@ -202,6 +209,7 @@ const APP: () = {
         }
     }
 
+    // Prints Periodically.
     #[task(schedule = [print_status], resources = [tx, range])]
     fn print_status(cx: print_status::Context) {
         let tx = cx.resources.tx;
@@ -214,6 +222,7 @@ const APP: () = {
             .unwrap();
     }
 
+    // Beats Periodically.
     #[task(schedule = [heartbeat], resources = [led] )]
     fn heartbeat(cx: heartbeat::Context) {
         static mut TOGGLE: bool = false;
@@ -233,21 +242,24 @@ const APP: () = {
             .unwrap();
     }
 
+    // Parties Periodically.
     #[task(schedule = [disco_mode], resources = [light_controller])]
     fn disco_mode(cx: disco_mode::Context) {
         static mut COUNTER: u32 = 0;
 
         let lc = cx.resources.light_controller;
 
-        *COUNTER+=1;
+        *COUNTER += 1;
         match *COUNTER {
             1 => lc.red(),
             2 => lc.yellow(),
             3 => lc.green(),
             4 => lc.cyan(),
             5 => lc.blue(),
-            6 => lc.magenta(),
-            _ => *COUNTER = 0,
+            _ => {
+                lc.magenta();
+                *COUNTER = 0;
+            }
         }
 
         cx.schedule
@@ -255,6 +267,7 @@ const APP: () = {
             .unwrap();
     }
 
+    // Pings, then Pongs, Periodically.
     #[task(schedule = [pong], resources = [ping_pong_pin])]
     fn ping(cx: ping::Context) {
         // HCSR04-23070007.pdf suggests 10uS pulse to trigger system
@@ -263,6 +276,7 @@ const APP: () = {
         cx.schedule.pong(cx.scheduled + NEXT.cycles()).unwrap();
     }
 
+    // Only pongs if pinged. Then pings. Periodically.
     #[task(schedule = [ping], resources = [ping_pong_pin])]
     fn pong(cx: pong::Context) {
         // HCSR04-23070007.pdf suggests >60ms measurement cycle.
@@ -271,6 +285,8 @@ const APP: () = {
         cx.schedule.ping(cx.scheduled + NEXT.cycles()).unwrap();
     }
 
+    // Measures pulse-width on an input EXTI pin to the ms.  Pretty handy little task.
+    // also outputs this as a measured distance using the measured_range function.
     #[task(binds = EXTI9_5, resources = [echo, duration_timer, range])]
     fn receive_echo(cx: receive_echo::Context) {
         static mut START_TIME: Option<Instant> = None;

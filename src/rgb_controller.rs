@@ -15,34 +15,48 @@ pub struct RgbController<R: embedded_hal::PwmPin, G: embedded_hal::PwmPin, B: em
     pub B,
 );
 
-impl<R: embedded_hal::PwmPin<Duty=u16>,G: embedded_hal::PwmPin<Duty=u16>, B: embedded_hal::PwmPin<Duty=u16>> SixColor for RgbController<R,G,B> {
+impl<
+        R: embedded_hal::PwmPin<Duty = u32>,
+        G: embedded_hal::PwmPin<Duty = u32>,
+        B: embedded_hal::PwmPin<Duty = u32>,
+    > SixColor for RgbController<R, G, B>
+{
     fn red(&mut self) {
-        let (r, _,_) = self.get_max_duty();
+        let RgbController(r, _, _) = self;
+        let r = r.get_max_duty();
         self.set_duty((r, 0, 0));
     }
 
     fn blue(&mut self) {
-        let (_,_,b) = self.get_max_duty();
+        let RgbController(_, _, b) = self;
+        let b = b.get_max_duty();
         self.set_duty((0, 0, b));
     }
 
     fn green(&mut self) {
-        let (_,g,_) = self.get_max_duty();
+        let RgbController(_, g, _) = self;
+        let g = g.get_max_duty();
         self.set_duty((0, g, 0));
     }
 
     fn yellow(&mut self) {
-        let (r,g,_) = self.get_max_duty();
-        self.set_duty((r,g,0));
+        let RgbController(r, g, _) = self;
+        let r = r.get_max_duty();
+        let g = g.get_max_duty();
+        self.set_duty((r, g, 0));
     }
 
     fn magenta(&mut self) {
-        let (r,_,b) = self.get_max_duty();
+        let RgbController(r, _, b) = self;
+        let r = r.get_max_duty();
+        let b = b.get_max_duty();
         self.set_duty((r, 0, b));
     }
 
     fn cyan(&mut self) {
-        let (_,g,b) = self.get_max_duty();
+        let RgbController(_, g, b) = self;
+        let g = g.get_max_duty();
+        let b = b.get_max_duty();
         self.set_duty((0, g, b));
     }
 }
@@ -82,5 +96,3 @@ impl<R: PwmPin, G: PwmPin, B: PwmPin> embedded_hal::PwmPin for RgbController<R, 
         blue.set_duty(b);
     }
 }
-
-
