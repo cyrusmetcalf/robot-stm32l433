@@ -3,7 +3,6 @@
 
 use panic_halt as _;
 
-
 // Speed of Sound in cm/ms @ standard temperature/pressure, non-adjusted.
 const SPEED_OF_SOUND: f32 = 34.3;
 
@@ -18,7 +17,7 @@ mod app {
         gpio::{Edge, Input, Output, PullDown, PushPull},
         gpio::{PB1, PB13, PB6},
         interrupt,
-        pac::{TIM1,USART2},
+        pac::{TIM1, USART2},
         prelude::*,
         pwm::Pwm,
         pwm::{C1, C2, C3},
@@ -27,19 +26,22 @@ mod app {
         time::{Hertz, Instant, MonoTimer},
     };
 
-    use embedded_hal_pwm_utilities::rgb_controller::{RgbController, SixColor};
+    use crate::measured_range;
     use core::fmt::Write;
     use cortex_m::peripheral::DWT;
-    use crate::measured_range;
+    use embedded_hal_pwm_utilities::rgb_controller::{RgbController, SixColor};
+    use systick_monotonic::*;
 
     const SYSTEM_CLOCK: u32 = 80_000_000;
 
-    #[monotonic(binds = DWT, default = true)]
-    type MonoTonic = Systick<1000>;
+    #[monotonic(binds=SysTick, default = true)]
+    type MonotonicClock = Systick<1000>;
 
     #[shared]
     struct SharedResources {
+        #[lock_free]
         ping_pong_pin: PB1<Output<PushPull>>,
+        #[lock_free]
         range: f32,
     }
 
@@ -53,7 +55,7 @@ mod app {
     }
 
     #[init]
-    fn init(mut cx: init::Context) ->  (SharedResources, LocalResources, init::Monotonics) {
+    fn init(mut cx: init::Context) -> (SharedResources, LocalResources, init::Monotonics) {
         let mut dp = cx.device;
 
         // Prevent instibility on sleep with Probe-run
@@ -68,9 +70,6 @@ mod app {
         DWT::unlock();
         cx.core.DWT.enable_cycle_counter();
 
-        let systick = cx.core.DWT;
-        let mono = Systick::new(systick, SYSTEM_CLOCK);
-
         let mut rcc = dp.RCC.constrain();
         let mut flash = dp.FLASH.constrain();
         let mut pwr = dp.PWR.constrain(&mut rcc.apb1r1);
@@ -79,6 +78,11 @@ mod app {
             .sysclk(SYSTEM_CLOCK.hz())
             .hclk(SYSTEM_CLOCK.hz())
             .freeze(&mut flash.acr, &mut pwr);
+
+        let systick = cx.core.SYST;
+
+        // mono timer
+        let monotonic_clock = Systick::new(systick, clocks.sysclk().0);
 
         //General Purpose Duration Timer
         let duration_timer = MonoTimer::new(cx.core.DWT, clocks);
@@ -185,112 +189,113 @@ mod app {
         ping_pong_pin.set_low().unwrap();
 
         rtic::pend(interrupt::EXTI9_5);
+        heartbeat::spawn_after(1.secs()).unwrap();
+        disco_mode::spawn_after(1.secs()).unwrap();
+        print_status::spawn_at(monotonics::now()).unwrap();
+        ping::spawn_at(monotonics::now()).unwrap();
 
-        //
-        // spawn_afterd Tasks
-        //
-
-//        heartbeat::spawn_after(cx.start + SYSTEM_CLOCK.cycles()).unwrap();
-//
-//        disco_mode::spawn_after(cx.start + SYSTEM_CLOCK.cycles()).unwrap();
-//
-//        print_status::spawn_after(cx.start + (SYSTEM_CLOCK / 2).cycles()).unwrap();
-//
-//        ping::spawn_after(cx.start).unwrap();
-//
-        (SharedResources, LocalResources, init::Monotonics())
+        (
+            SharedResources {
+                ping_pong_pin,
+                range: 0.0,
+            },
+            LocalResources {
+                tx,
+                led,
+                echo,
+                duration_timer,
+                light_controller,
+            },
+            init::Monotonics(monotonic_clock),
+        )
     }
 
-//    // Prints Periodically.
-//    #[task(local = [tx], shared = [range])]
-//    fn print_status(cx: print_status::Context) {
-//        let tx = cx.resources.tx;
-//        let range = cx.resources.range;
-//        write!(tx, "measured range: {:.2}cm\r", range).unwrap();
-//
-//        // print every 1 second
-//        print_status::spawn_after(cx.spawn_afterd + SYSTEM_CLOCK.cycles()).unwrap();
-//    }
-//
-//    // Beats Periodically.
-//    #[task(local = [led] )]
-//    fn heartbeat(cx: heartbeat::Context) {
-//        static mut TOGGLE: bool = false;
-//
-//        let led = cx.resources.led;
-//
-//        if *TOGGLE {
-//            led.set_high().unwrap();
-//            *TOGGLE = false;
-//        } else {
-//            led.set_low().unwrap();
-//            *TOGGLE = true;
-//        }
-//        heartbeat::spawn_after(cx.spawn_afterd + SYSTEM_CLOCK.cycles()).unwrap();
-//    }
-//
-//    // Parties Periodically.
-//    #[task(local = [light_controller])]
-//    fn disco_mode(cx: disco_mode::Context) {
-//        static mut COUNTER: u32 = 0;
-//
-//        let lc = cx.resources.light_controller;
-//
-//        *COUNTER += 1;
-//        match *COUNTER {
-//            1 => lc.red(),
-//            2 => lc.yellow(),
-//            3 => lc.green(),
-//            4 => lc.cyan(),
-//            5 => lc.blue(),
-//            _ => {
-//                lc.magenta();
-//                *COUNTER = 0;
-//            }
-//        }
-//        disco_mode::spawn_after(cx.spawn_afterd + SYSTEM_CLOCK.cycles()).unwrap();
-//    }
-//
-//    // Pings, then Pongs, Periodically.
-//    #[task(shared = [ping_pong_pin])]
-//    fn ping(cx: ping::Context) {
-//        // HCSR04-23070007.pdf suggests 10uS pulse to trigger system
-//        const NEXT: u32 = (SYSTEM_CLOCK / 1_000_000) * 10;
-//        cx.resources.ping_pong_pin.set_high().unwrap();
-//        pong::spawn_after(cx.spawn_afterd + NEXT.cycles()).unwrap();
-//    }
-//
-//    // Only pongs if pinged. Then pings. Periodically.
-//    #[task(shared = [ping_pong_pin])]
-//    fn pong(cx: pong::Context) {
-//        // HCSR04-23070007.pdf suggests >60ms measurement cycle.
-//        const NEXT: u32 = (SYSTEM_CLOCK / 1000) * 60;
-//        cx.resources.ping_pong_pin.set_low().unwrap();
-//        ping::spawn_after(cx.spawn_afterd + NEXT.cycles()).unwrap();
-//    }
-//
-//    // Measures pulse-width on an input EXTI pin to the ms.  Pretty handy little task.
-//    // also outputs this as a measured distance using the measured_range function.
-//    #[task(binds = EXTI9_5, local = [echo, duration_timer],shared = [range])]
-//    fn receive_echo(cx: receive_echo::Context) {
-//        static mut START_TIME: Option<Instant> = None;
-//        if cx.resources.echo.check_interrupt() {
-//            cx.resources.echo.clear_interrupt_pending_bit();
-//
-//            let pin = cx.resources.echo;
-//            let tim = cx.resources.duration_timer;
-//            let output = cx.resources.range;
-//
-//            *START_TIME = if pin.is_high().unwrap() {
-//                Some(tim.now())
-//            } else {
-//                if let Some(get_time) = *START_TIME {
-//                    let Hertz(freq) = tim.frequency();
-//                    let pulse_time_ms = 1000.0 * get_time.elapsed() as f32 / freq as f32;
-//                    *output = measured_range(pulse_time_ms);
-//                }
-//                None
-//            };
-//        }
-//    }
+    // Prints Periodically.
+    #[task(local = [tx], shared = [range])]
+    fn print_status(cx: print_status::Context) {
+        let tx = cx.local.tx;
+        let range = cx.shared.range;
+        write!(tx, "measured range: {:.2}cm\r", range).unwrap();
+
+        // print every 1 second
+        print_status::spawn_after(1.secs()).unwrap();
+    }
+
+    // Beats Periodically.
+    #[task(local = [led, toggle: bool = false] )]
+    fn heartbeat(cx: heartbeat::Context) {
+        let led = cx.local.led;
+        let toggle = cx.local.toggle;
+
+        if *toggle {
+            led.set_high().unwrap();
+            *toggle = false;
+        } else {
+            led.set_low().unwrap();
+            *toggle = true;
+        }
+        heartbeat::spawn_after(1.secs()).unwrap();
+    }
+
+    // Parties Periodically.
+    #[task(local = [light_controller, counter: u32 = 0])]
+    fn disco_mode(cx: disco_mode::Context) {
+        let lc = cx.local.light_controller;
+        let counter = cx.local.counter;
+
+        *counter += 1;
+        match counter {
+            1 => lc.red(),
+            2 => lc.yellow(),
+            3 => lc.green(),
+            4 => lc.cyan(),
+            5 => lc.blue(),
+            _ => {
+                lc.magenta();
+                *counter = 0;
+            }
+        }
+        disco_mode::spawn_after(1.secs()).unwrap();
+    }
+
+    // Pings, then Pongs, Periodically.
+    #[task(shared = [ping_pong_pin])]
+    fn ping(cx: ping::Context) {
+        // HCSR04-23070007.pdf suggests 10uS pulse to trigger system
+        cx.shared.ping_pong_pin.set_high().unwrap();
+        pong::spawn_after(systick_monotonic::ExtU64::micros(10)).unwrap();
+    }
+
+    // Only pongs if pinged. Then pings. Periodically.
+    #[task(shared = [ping_pong_pin])]
+    fn pong(cx: pong::Context) {
+        // HCSR04-23070007.pdf suggests >60ms measurement cycle.
+        cx.shared.ping_pong_pin.set_low().unwrap();
+        ping::spawn_after(systick_monotonic::ExtU64::micros(10)).unwrap();
+    }
+
+    // Measures pulse-width on an input EXTI pin to the ms.  Pretty handy little task.
+    // also outputs this as a measured distance using the measured_range function.
+    #[task(binds = EXTI9_5, local = [echo, duration_timer, start_time: Option<Instant> = None],shared = [range])]
+    fn receive_echo(cx: receive_echo::Context) {
+        let start_time = cx.local.start_time;
+        if cx.local.echo.check_interrupt() {
+            cx.local.echo.clear_interrupt_pending_bit();
+
+            let pin = cx.local.echo;
+            let tim = cx.local.duration_timer;
+            let output = cx.shared.range;
+
+            *start_time = if pin.is_high().unwrap() {
+                Some(tim.now())
+            } else {
+                if let Some(get_time) = *start_time {
+                    let Hertz(freq) = tim.frequency();
+                    let pulse_time_ms = 1000.0 * get_time.elapsed() as f32 / freq as f32;
+                    *output = measured_range(pulse_time_ms);
+                }
+                None
+            };
+        }
+    }
 }
