@@ -5,7 +5,7 @@ use panic_halt as _;
 
 use core::fmt::Write;
 use cortex_m::peripheral::DWT;
-use robot_stm32l433::rgb_controller::{RgbController, SixColor};
+use embedded_hal_pwm_utilities::rgb_controller::{RgbController, SixColor};
 use rtic::cyccnt::U32Ext;
 
 use stm32l4xx_hal::{
@@ -13,7 +13,7 @@ use stm32l4xx_hal::{
     gpio::{Edge, Input, Output, PullDown, PushPull},
     gpio::{PB1, PB13, PB6},
     interrupt,
-    pac::{TIM1, TIM2, USART2},
+    pac::{TIM1,USART2},
     prelude::*,
     pwm::Pwm,
     pwm::{C1, C2, C3},

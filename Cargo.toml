@@ -29,6 +29,7 @@ panic-halt = "^0.2.0"
 generic-array = "0.14.4"
 heapless = "0.6.1"
 nb = "1.0.0"
+embedded-hal-pwm-utilities = { git = "https://github.com/cyrusmetcalf/embedded-hal-pwm-utilities.git" }
 
 [dependencies.stm32l4xx-hal]
 features = ["stm32l4x3", "rt"]
