@@ -31,21 +31,26 @@ fn measured_range(echo_length_ms: f32) -> f32 {
     echo_length_ms * SPEED_OF_SOUND / 2.0
 }
 
-#[rtic::app(device = stm32l4xx_hal::stm32,peripherals=true, monotonic = rtic::cyccnt::CYCCNT)]
-const APP: () = {
-    struct Resources {
-        rx: serial::Rx<USART2>,
+#[rtic::app(device = stm32l4xx_hal::stm32,peripherals=true, monotonic = rtic::cyccnt::CYCCNT, dispatchers = [EXTI0])]
+mod app {
+
+    #[shared]
+    struct SharedResources {
+        ping_pong_pin: PB1<Output<PushPull>>,
+        range: f32,
+    }
+
+    #[local]
+    struct LocalResources {
         tx: serial::Tx<USART2>,
         led: PB13<Output<PushPull>>,
-        ping_pong_pin: PB1<Output<PushPull>>,
         echo: PB6<Input<PullDown>>,
         duration_timer: MonoTimer,
-        range: f32,
         light_controller: RgbController<Pwm<TIM1, C1>, Pwm<TIM1, C2>, Pwm<TIM1, C3>>,
     }
 
-    #[init(schedule = [heartbeat, print_status, ping, disco_mode])]
-    fn init(mut cx: init::Context) -> init::LateResources {
+    #[init]
+    fn init(mut cx: init::Context) ->  (SharedResources, LocalResources, init::Monotonics) {
         let mut dp = cx.device;
 
         // Prevent instibility on sleep with Probe-run
@@ -87,7 +92,7 @@ const APP: () = {
         let tx = gpioa.pa2.into_af7(&mut gpioa.moder, &mut gpioa.afrl);
         let rx = gpioa.pa3.into_af7(&mut gpioa.moder, &mut gpioa.afrl);
 
-        let (tx, rx) = Serial::usart2(
+        let (tx, _rx) = Serial::usart2(
             dp.USART2,
             (tx, rx),
             Config::default().baudrate(baudrate),
@@ -179,51 +184,30 @@ const APP: () = {
         // Scheduled Tasks
         //
 
-        // Heart Beat
-        cx.schedule
-            .heartbeat(cx.start + SYSTEM_CLOCK.cycles())
-            .unwrap();
+        heartbeat::schedule(cx.start + SYSTEM_CLOCK.cycles()).unwrap();
 
-        // Disco Mode - Cycles colors on LED in regular pattern
-        cx.schedule
-            .disco_mode(cx.start + SYSTEM_CLOCK.cycles())
-            .unwrap();
+        disco_mode::schedule(cx.start + SYSTEM_CLOCK.cycles()).unwrap();
 
-        // Prints out status structure, currently only shows the range finder.
-        cx.schedule
-            .print_status(cx.start + (SYSTEM_CLOCK / 2).cycles())
-            .unwrap();
+        print_status::schedule(cx.start + (SYSTEM_CLOCK / 2).cycles()).unwrap();
 
-        // Kick off the sonar ping/pong tasks to trigger range finder
-        cx.schedule.ping(cx.start).unwrap();
+        ping::schedule(cx.start).unwrap();
 
-        init::LateResources {
-            tx,
-            rx,
-            led,
-            ping_pong_pin,
-            echo,
-            duration_timer,
-            range: 0.0_f32,
-            light_controller,
-        }
+        (SharedResources, LocalResources, init::Monotonics())
     }
 
     // Prints Periodically.
-    #[task(schedule = [print_status], resources = [tx, range])]
+    #[task(local = [tx], shared = [range])]
     fn print_status(cx: print_status::Context) {
         let tx = cx.resources.tx;
         let range = cx.resources.range;
         write!(tx, "measured range: {:.2}cm\r", range).unwrap();
 
         // print every 1 second
-        cx.schedule
-            .print_status(cx.scheduled + SYSTEM_CLOCK.cycles())
-            .unwrap();
+        print_status::schedule(cx.scheduled + SYSTEM_CLOCK.cycles()).unwrap();
     }
 
     // Beats Periodically.
-    #[task(schedule = [heartbeat], resources = [led] )]
+    #[task(local = [led] )]
     fn heartbeat(cx: heartbeat::Context) {
         static mut TOGGLE: bool = false;
 
@@ -236,14 +220,11 @@ const APP: () = {
             led.set_low().unwrap();
             *TOGGLE = true;
         }
-
-        cx.schedule
-            .heartbeat(cx.scheduled + SYSTEM_CLOCK.cycles())
-            .unwrap();
+        heartbeat::schedule(cx.scheduled + SYSTEM_CLOCK.cycles()).unwrap();
     }
 
     // Parties Periodically.
-    #[task(schedule = [disco_mode], resources = [light_controller])]
+    #[task(local = [light_controller])]
     fn disco_mode(cx: disco_mode::Context) {
         static mut COUNTER: u32 = 0;
 
@@ -261,33 +242,30 @@ const APP: () = {
                 *COUNTER = 0;
             }
         }
-
-        cx.schedule
-            .disco_mode(cx.scheduled + SYSTEM_CLOCK.cycles())
-            .unwrap();
+        disco_mode::schedule(cx.scheduled + SYSTEM_CLOCK.cycles()).unwrap();
     }
 
     // Pings, then Pongs, Periodically.
-    #[task(schedule = [pong], resources = [ping_pong_pin])]
+    #[task(shared = [ping_pong_pin])]
     fn ping(cx: ping::Context) {
         // HCSR04-23070007.pdf suggests 10uS pulse to trigger system
         const NEXT: u32 = (SYSTEM_CLOCK / 1_000_000) * 10;
         cx.resources.ping_pong_pin.set_high().unwrap();
-        cx.schedule.pong(cx.scheduled + NEXT.cycles()).unwrap();
+        pong::schedule(cx.scheduled + NEXT.cycles()).unwrap();
     }
 
     // Only pongs if pinged. Then pings. Periodically.
-    #[task(schedule = [ping], resources = [ping_pong_pin])]
+    #[task(shared = [ping_pong_pin])]
     fn pong(cx: pong::Context) {
         // HCSR04-23070007.pdf suggests >60ms measurement cycle.
         const NEXT: u32 = (SYSTEM_CLOCK / 1000) * 60;
         cx.resources.ping_pong_pin.set_low().unwrap();
-        cx.schedule.ping(cx.scheduled + NEXT.cycles()).unwrap();
+        ping::schedule(cx.scheduled + NEXT.cycles()).unwrap();
     }
 
     // Measures pulse-width on an input EXTI pin to the ms.  Pretty handy little task.
     // also outputs this as a measured distance using the measured_range function.
-    #[task(binds = EXTI9_5, resources = [echo, duration_timer, range])]
+    #[task(binds = EXTI9_5, local = [echo, duration_timer],shared = [range])]
     fn receive_echo(cx: receive_echo::Context) {
         static mut START_TIME: Option<Instant> = None;
         if cx.resources.echo.check_interrupt() {
@@ -310,7 +288,4 @@ const APP: () = {
         }
     }
 
-    extern "C" {
-        fn EXTI0();
-    }
 };
