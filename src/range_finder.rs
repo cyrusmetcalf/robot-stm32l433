@@ -37,7 +37,7 @@ pub fn receive_echo(cx: app::receive_echo::Context) {
 pub fn ping(cx: app::ping::Context) {
     // HCSR04-23070007.pdf suggests 10uS pulse to trigger system
     cx.shared.ping_pong_pin.set_high().unwrap();
-    app::pong::spawn_after(systick_monotonic::ExtU64::micros(10)).unwrap();
+    app::pong::spawn_at(app::monotonics::now() + systick_monotonic::ExtU64::micros(10)).unwrap();
 }
 
 // Only pongs if pinged. Then pings. Periodically.

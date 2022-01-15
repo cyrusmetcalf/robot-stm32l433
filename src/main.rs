@@ -22,13 +22,13 @@ mod app {
         time::{Instant, MonoTimer},
     };
 
-    use core::fmt::Write;
     use cortex_m::peripheral::DWT;
     use systick_monotonic::*;
 
     use crate::{
         blinky::heartbeat,
         range_finder::{ping, pong, receive_echo},
+        status_reporter::print_status,
     };
     use embedded_hal_pwm_utilities::rgb_controller::{RgbController, SixColor};
 
@@ -205,17 +205,6 @@ mod app {
         )
     }
 
-    // Prints Periodically.
-    #[task(local = [tx], shared = [range])]
-    fn print_status(cx: print_status::Context) {
-        let tx = cx.local.tx;
-        let range = cx.shared.range;
-        write!(tx, "measured range: {:.2}cm\r", range).unwrap();
-
-        // print every 1 second
-        print_status::spawn_after(1.secs()).unwrap();
-    }
-
     // Parties Periodically.
     #[task(local = [light_controller, counter: u32 = 0])]
     fn disco_mode(cx: disco_mode::Context) {
@@ -235,6 +224,12 @@ mod app {
             }
         }
         disco_mode::spawn_after(1.secs()).unwrap();
+    }
+
+    // Status Print
+    extern "Rust" {
+        #[task(local = [tx], shared = [range])]
+        fn print_status(cx: print_status::Context);
     }
 
     // Heartbeat Task
@@ -258,5 +253,20 @@ mod app {
         // Only pongs if pinged. Then pings. Periodically.
         #[task(shared = [ping_pong_pin])]
         fn pong(_: pong::Context);
+    }
+}
+
+pub mod status_reporter {
+    use crate::app;
+    use core::fmt::Write;
+    use systick_monotonic::*;
+    // Prints Periodically.
+    pub fn print_status(cx: app::print_status::Context) {
+        let tx = cx.local.tx;
+        let range = cx.shared.range;
+        write!(tx, "measured range: {:.2}cm\r", range).unwrap();
+
+        // print every 1 second
+        app::print_status::spawn_after(1.secs()).unwrap();
     }
 }
