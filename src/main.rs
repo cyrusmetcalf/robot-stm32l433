@@ -1,14 +1,10 @@
 #![no_std]
 #![no_main]
 
+pub mod blinky;
+pub mod range_finder;
+
 use panic_halt as _;
-
-// Speed of Sound in cm/ms @ standard temperature/pressure, non-adjusted.
-const SPEED_OF_SOUND: f32 = 34.3;
-
-fn measured_range(echo_length_ms: f32) -> f32 {
-    echo_length_ms * SPEED_OF_SOUND / 2.0
-}
 
 #[rtic::app(device = stm32l4xx_hal::stm32, dispatchers = [EXTI0])]
 mod app {
@@ -23,14 +19,16 @@ mod app {
         pwm::{C1, C2, C3},
         serial,
         serial::{Config, Serial},
-        time::{Hertz, Instant, MonoTimer},
+        time::{Instant, MonoTimer},
     };
 
-    use crate::measured_range;
     use core::fmt::Write;
     use cortex_m::peripheral::DWT;
     use embedded_hal_pwm_utilities::rgb_controller::{RgbController, SixColor};
     use systick_monotonic::*;
+
+    use crate::blinky::heartbeat;
+    use crate::range_finder::{ping, pong, receive_echo};
 
     const SYSTEM_CLOCK: u32 = 80_000_000;
 
@@ -73,6 +71,7 @@ mod app {
         let mut rcc = dp.RCC.constrain();
         let mut flash = dp.FLASH.constrain();
         let mut pwr = dp.PWR.constrain(&mut rcc.apb1r1);
+
         let clocks = rcc
             .cfgr
             .sysclk(SYSTEM_CLOCK.hz())
@@ -168,11 +167,6 @@ mod app {
             &mut rcc.apb1r1,
         );
 
-        //        let mut wheel_controller = Wheels::new(wheel_pins);
-        //        wheel_controller.enable();
-        //
-        // Range Finder
-
         // we need an edge-triggered interrupt that measures how long it was held high.
         let mut echo = gpiob
             .pb6
@@ -221,22 +215,6 @@ mod app {
         print_status::spawn_after(1.secs()).unwrap();
     }
 
-    // Beats Periodically.
-    #[task(local = [led, toggle: bool = false] )]
-    fn heartbeat(cx: heartbeat::Context) {
-        let led = cx.local.led;
-        let toggle = cx.local.toggle;
-
-        if *toggle {
-            led.set_high().unwrap();
-            *toggle = false;
-        } else {
-            led.set_low().unwrap();
-            *toggle = true;
-        }
-        heartbeat::spawn_after(1.secs()).unwrap();
-    }
-
     // Parties Periodically.
     #[task(local = [light_controller, counter: u32 = 0])]
     fn disco_mode(cx: disco_mode::Context) {
@@ -258,44 +236,26 @@ mod app {
         disco_mode::spawn_after(1.secs()).unwrap();
     }
 
-    // Pings, then Pongs, Periodically.
-    #[task(shared = [ping_pong_pin])]
-    fn ping(cx: ping::Context) {
-        // HCSR04-23070007.pdf suggests 10uS pulse to trigger system
-        cx.shared.ping_pong_pin.set_high().unwrap();
-        pong::spawn_after(systick_monotonic::ExtU64::micros(10)).unwrap();
+    // Heartbeat Task
+    extern "Rust" {
+        // Beats Periodically.
+        #[task(local = [led, toggle: bool = false] )]
+        fn heartbeat(_: heartbeat::Context);
+
     }
 
-    // Only pongs if pinged. Then pings. Periodically.
-    #[task(shared = [ping_pong_pin])]
-    fn pong(cx: pong::Context) {
-        // HCSR04-23070007.pdf suggests >60ms measurement cycle.
-        cx.shared.ping_pong_pin.set_low().unwrap();
-        ping::spawn_after(systick_monotonic::ExtU64::micros(10)).unwrap();
-    }
+    // Ultrasonic Range Finder Tasks
+    extern "Rust" {
+        // Measures pulse-width on an input EXTI pin to the ms.  Pretty handy little task.
+        #[task(binds = EXTI9_5, local = [echo, duration_timer, start_time: Option<Instant> = None],shared = [range])]
+        fn receive_echo(_: receive_echo::Context);
 
-    // Measures pulse-width on an input EXTI pin to the ms.  Pretty handy little task.
-    // also outputs this as a measured distance using the measured_range function.
-    #[task(binds = EXTI9_5, local = [echo, duration_timer, start_time: Option<Instant> = None],shared = [range])]
-    fn receive_echo(cx: receive_echo::Context) {
-        let start_time = cx.local.start_time;
-        if cx.local.echo.check_interrupt() {
-            cx.local.echo.clear_interrupt_pending_bit();
+        // Pings, then Pongs, Periodically.
+        #[task(shared = [ping_pong_pin])]
+        fn ping(_: ping::Context);
 
-            let pin = cx.local.echo;
-            let tim = cx.local.duration_timer;
-            let output = cx.shared.range;
-
-            *start_time = if pin.is_high().unwrap() {
-                Some(tim.now())
-            } else {
-                if let Some(get_time) = *start_time {
-                    let Hertz(freq) = tim.frequency();
-                    let pulse_time_ms = 1000.0 * get_time.elapsed() as f32 / freq as f32;
-                    *output = measured_range(pulse_time_ms);
-                }
-                None
-            };
-        }
+        // Only pongs if pinged. Then pings. Periodically.
+        #[task(shared = [ping_pong_pin])]
+        fn pong(_: pong::Context);
     }
 }
