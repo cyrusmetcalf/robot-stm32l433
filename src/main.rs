@@ -212,13 +212,13 @@ mod app {
     // RGB Led control task
     extern "Rust" {
         #[task(local = [light_controller], shared = [range])]
-        fn set_light_from_range(cx: set_light_from_range::Context);
+        fn set_light_from_range(_: set_light_from_range::Context);
     }
 
     // Status Print
     extern "Rust" {
         #[task(local = [tx], shared = [range])]
-        fn print_status(cx: print_status::Context);
+        fn print_status(_: print_status::Context);
     }
 
     // Heartbeat Task
