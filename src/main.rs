@@ -1,10 +1,10 @@
 #![no_std]
 #![no_main]
 
+use panic_halt as _;
+
 pub mod blinky;
 pub mod range_finder;
-
-use panic_halt as _;
 
 #[rtic::app(device = stm32l4xx_hal::stm32, dispatchers = [EXTI0])]
 mod app {
@@ -24,14 +24,15 @@ mod app {
 
     use core::fmt::Write;
     use cortex_m::peripheral::DWT;
-    use embedded_hal_pwm_utilities::rgb_controller::{RgbController, SixColor};
     use systick_monotonic::*;
 
-    use crate::blinky::heartbeat;
-    use crate::range_finder::{ping, pong, receive_echo};
+    use crate::{
+        blinky::heartbeat,
+        range_finder::{ping, pong, receive_echo},
+    };
+    use embedded_hal_pwm_utilities::rgb_controller::{RgbController, SixColor};
 
     const SYSTEM_CLOCK: u32 = 80_000_000;
-
     #[monotonic(binds=SysTick, default = true)]
     type MonotonicClock = Systick<1000>;
 
