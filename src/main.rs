@@ -5,6 +5,7 @@ use panic_halt as _;
 
 pub mod blinky;
 pub mod range_finder;
+pub mod rgb_led;
 pub mod status_reporter;
 
 #[rtic::app(device = stm32l4xx_hal::stm32, dispatchers = [EXTI0])]
@@ -29,9 +30,10 @@ mod app {
     use crate::{
         blinky::heartbeat,
         range_finder::{ping, pong, receive_echo},
+        rgb_led::set_light_from_range,
         status_reporter::print_status,
     };
-    use embedded_hal_pwm_utilities::rgb_controller::{RgbController, SixColor};
+    use embedded_hal_pwm_utilities::rgb_controller::RgbController;
 
     const SYSTEM_CLOCK: u32 = 80_000_000;
 
@@ -187,7 +189,7 @@ mod app {
 
         rtic::pend(interrupt::EXTI9_5);
         heartbeat::spawn_after(1.secs()).unwrap();
-        disco_mode::spawn_after(1.secs()).unwrap();
+        set_light_from_range::spawn_after(1.secs()).unwrap();
         print_status::spawn_at(monotonics::now()).unwrap();
         ping::spawn_at(monotonics::now()).unwrap();
 
@@ -207,22 +209,10 @@ mod app {
         )
     }
 
-    // Parties Periodically.
-    #[task(local = [light_controller], shared = [range])]
-    fn disco_mode(cx: disco_mode::Context) {
-        let lc = cx.local.light_controller;
-        let range = cx.shared.range;
-
-        match *range as u32 {
-            0..=3 => lc.red(),
-            4..=9 => lc.yellow(),
-            10..=19 => lc.green(),
-            20..=29 => lc.cyan(),
-            30..=40 => lc.blue(),
-            _ => lc.magenta(),
-        }
-
-        disco_mode::spawn_after(100.millis()).unwrap();
+    // RGB Led control task
+    extern "Rust" {
+        #[task(local = [light_controller], shared = [range])]
+        fn set_light_from_range(cx: set_light_from_range::Context);
     }
 
     // Status Print
@@ -233,15 +223,13 @@ mod app {
 
     // Heartbeat Task
     extern "Rust" {
-        // Beats Periodically.
         #[task(local = [led, toggle: bool = false] )]
         fn heartbeat(_: heartbeat::Context);
-
     }
 
     // Ultrasonic Range Finder Tasks
     extern "Rust" {
-        // Measures pulse-width on an input EXTI pin to the ms.  Pretty handy little task.
+        // Measures pulse-width of return signal in ms and calculates range based on speed of sound.
         #[task(binds = EXTI9_5, local = [echo, duration_timer, start_time: Option<Instant> = None],shared = [range])]
         fn receive_echo(_: receive_echo::Context);
 
