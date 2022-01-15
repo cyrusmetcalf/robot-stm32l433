@@ -1,4 +1,3 @@
-
 use crate::app;
 use core::fmt::Write;
 use systick_monotonic::*;

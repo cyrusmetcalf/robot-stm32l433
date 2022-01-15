@@ -34,6 +34,7 @@ mod app {
     use embedded_hal_pwm_utilities::rgb_controller::{RgbController, SixColor};
 
     const SYSTEM_CLOCK: u32 = 80_000_000;
+
     #[monotonic(binds=SysTick, default = true)]
     type MonotonicClock = Systick<1000>;
 
@@ -207,24 +208,21 @@ mod app {
     }
 
     // Parties Periodically.
-    #[task(local = [light_controller, counter: u32 = 0])]
+    #[task(local = [light_controller], shared = [range])]
     fn disco_mode(cx: disco_mode::Context) {
         let lc = cx.local.light_controller;
-        let counter = cx.local.counter;
+        let range = cx.shared.range;
 
-        *counter += 1;
-        match counter {
-            1 => lc.red(),
-            2 => lc.yellow(),
-            3 => lc.green(),
-            4 => lc.cyan(),
-            5 => lc.blue(),
-            _ => {
-                lc.magenta();
-                *counter = 0;
-            }
+        match *range as u32 {
+            0..=3 => lc.red(),
+            4..=9 => lc.yellow(),
+            10..=19 => lc.green(),
+            20..=29 => lc.cyan(),
+            30..=40 => lc.blue(),
+            _ => lc.magenta(),
         }
-        disco_mode::spawn_after(1.secs()).unwrap();
+
+        disco_mode::spawn_after(100.millis()).unwrap();
     }
 
     // Status Print
