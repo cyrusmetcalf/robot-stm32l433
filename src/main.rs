@@ -5,6 +5,7 @@ use panic_halt as _;
 
 pub mod blinky;
 pub mod range_finder;
+pub mod status_reporter;
 
 #[rtic::app(device = stm32l4xx_hal::stm32, dispatchers = [EXTI0])]
 mod app {
@@ -253,20 +254,5 @@ mod app {
         // Only pongs if pinged. Then pings. Periodically.
         #[task(shared = [ping_pong_pin])]
         fn pong(_: pong::Context);
-    }
-}
-
-pub mod status_reporter {
-    use crate::app;
-    use core::fmt::Write;
-    use systick_monotonic::*;
-    // Prints Periodically.
-    pub fn print_status(cx: app::print_status::Context) {
-        let tx = cx.local.tx;
-        let range = cx.shared.range;
-        write!(tx, "measured range: {:.2}cm\r", range).unwrap();
-
-        // print every 1 second
-        app::print_status::spawn_after(1.secs()).unwrap();
     }
 }
